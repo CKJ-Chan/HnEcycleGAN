@@ -32,7 +32,7 @@ if __name__ == '__main__':
     import wandb
     if opt.use_wandb:
         wandb.init(
-            entity="jackiechanchunki2852002",  # ✅ Make sure this matches your WandB username
+            entity="jackiechanchunki2852002-king-s-college-london",  # ✅ Make sure this matches your WandB username
             project=opt.wandb_project_name,
             name=run_name,
             config=vars(opt),  # logs all training args
