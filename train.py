@@ -12,7 +12,7 @@ if __name__ == '__main__':
     parser.add_argument('--threads', type=int, default=None, help='Override number of DataLoader workers')
     cli_args, _ = parser.parse_known_args()
 
-    opt = TrainOptions().parse(save=False)   # get training options without re-parsing sys.argv
+    opt = TrainOptions().parse 
 
     # ✅ Allow user to control number of DataLoader workers for optimal Colab performance
     import os
