@@ -12,7 +12,7 @@ if __name__ == '__main__':
     parser.add_argument('--threads', type=int, default=None, help='Override number of DataLoader workers')
     cli_args, _ = parser.parse_known_args()
 
-    opt = TrainOptions().parse 
+    opt = TrainOptions().parse()  # ✅ fixed: removed save=False
 
     # ✅ Allow user to control number of DataLoader workers for optimal Colab performance
     import os
@@ -32,10 +32,10 @@ if __name__ == '__main__':
     import wandb
     if opt.use_wandb:
         wandb.init(
-            entity="jackiechanchunki2852002-king-s-college-london",  # ✅ Make sure this matches your WandB username
+            entity="jackiechanchunki2852002-king-s-college-london",
             project=opt.wandb_project_name,
             name=run_name,
-            config=vars(opt),  # logs all training args
+            config=vars(opt),
             mode="online"
         )
 
@@ -46,7 +46,6 @@ if __name__ == '__main__':
     # ✅ Visualize 1 batch to verify DataLoader
     import torchvision.utils as vutils
     import torchvision.transforms as transforms
-    import matplotlib.pyplot as plt
     import numpy as np
 
     sample_batch = next(iter(dataset))
@@ -123,3 +122,38 @@ if __name__ == '__main__':
             model.save_networks(epoch)
 
         print('End of epoch %d / %d \t Time Taken: %d sec' % (epoch, opt.n_epochs + opt.n_epochs_decay, time.time() - epoch_start_time))
+
+    # 📈 Fetch and plot WandB losses
+    if opt.use_wandb:
+        try:
+            from wandb import Api
+            api = Api()
+            entity = "jackiechanchunki2852002-king-s-college-london"
+            project = opt.wandb_project_name
+            runs = api.runs(f"{entity}/{project}")
+            for r in runs:
+                if r.name == run_name:
+                    run = r
+                    break
+            else:
+                print("No matching run found in WandB.")
+                run = None
+
+            if run:
+                history = run.history(samples=10000)
+                loss_cols = [col for col in history.columns if col.startswith("loss_")]
+
+                plt.figure(figsize=(15, 6))
+                for col in loss_cols:
+                    smoothed = history[col].rolling(window=10).mean()
+                    plt.plot(smoothed, label=col)
+                plt.xlabel("Iterations")
+                plt.ylabel("Loss")
+                plt.title("Smoothed Training Losses Over Time")
+                plt.legend()
+                plt.grid(True)
+                plt.tight_layout()
+                plt.savefig("wandb_loss_plot.png")
+                plt.show()
+        except Exception as e:
+            print(f"⚠️ Could not fetch WandB history: {e}")
