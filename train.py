@@ -15,10 +15,13 @@ if __name__ == '__main__':
     import wandb
     if opt.use_wandb:
         wandb.init(
-            project=opt.wandb_project_name,
+            entity="jackiechanchunki2852002",
+            project="CycleGAN-BreastUV2HE",
             name=run_name,
-            config=vars(opt)  # logs all training args
+            config=vars(opt),
+            mode="online"
         )
+
 
     dataset = create_dataset(opt)  # create dataset
     dataset_size = len(dataset)
