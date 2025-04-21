@@ -15,12 +15,13 @@ if __name__ == '__main__':
     import wandb
     if opt.use_wandb:
         wandb.init(
-            entity="jackiechanchunki2852002",
-            project="CycleGAN-BreastUV2HE",
+            entity="jackiechanchunki2852002-king-s-college-london",  # ✅ Corrected entity
+            project=opt.wandb_project_name,
             name=run_name,
             config=vars(opt),
             mode="online"
         )
+
 
 
     dataset = create_dataset(opt)  # create dataset
