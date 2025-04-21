@@ -77,7 +77,6 @@ if __name__ == '__main__':
         iter_data_time = time.time()
         epoch_iter = 0
         visualizer.reset()
-        model.update_learning_rate()
 
         for i, data in enumerate(dataset):
             iter_start_time = time.time()
@@ -114,6 +113,9 @@ if __name__ == '__main__':
                 model.save_networks(save_suffix)
 
             iter_data_time = time.time()
+
+        # ✅ Update learning rate AFTER training loop (PyTorch recommendation)
+        model.update_learning_rate()
 
         if epoch % opt.save_epoch_freq == 0:
             print('saving the model at the end of epoch %d, iters %d' % (epoch, total_iters))
