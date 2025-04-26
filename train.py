@@ -38,6 +38,9 @@ if __name__ == '__main__':
             config=vars(opt),
             mode="online"
         )
+        # Save WandB run ID to file for later retrieval
+        with open("wandb_run_id.txt", "w") as f:
+            f.write(wandb.run.id)
 
     dataset = create_dataset(opt)
     dataset_size = len(dataset)
