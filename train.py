@@ -12,20 +12,20 @@ if __name__ == '__main__':
     parser.add_argument('--threads', type=int, default=None, help='Override number of DataLoader workers')
     cli_args, _ = parser.parse_known_args()
 
-    opt = TrainOptions().parse()  # ✅ fixed: removed save=False
+    opt = TrainOptions().parse()
 
-    # ✅ Allow user to control number of DataLoader workers for optimal Colab performance
+    # DataLoader threads override for Colab
     import os
     if cli_args.threads is not None:
         opt.num_threads = cli_args.threads
         print(f"Overriding num_threads from CLI: {opt.num_threads}")
     elif 'COLAB_GPU' in os.environ and opt.num_threads == 4:
-        opt.num_threads = 2  # Safe default for Colab if user didn't override
+        opt.num_threads = 2
         print("Colab detected: setting DataLoader num_threads to 2")
     else:
         print(f"Using user-defined num_threads: {opt.num_threads}")
 
-    # 🏢 Auto-name the WandB run with timestamp
+    # Auto-name WandB run
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_name = f"breastUV2HE_{timestamp}"
 
@@ -39,11 +39,11 @@ if __name__ == '__main__':
             mode="online"
         )
 
-    dataset = create_dataset(opt)  # create dataset
+    dataset = create_dataset(opt)
     dataset_size = len(dataset)
     print('The number of training images = %d' % dataset_size)
 
-    # ✅ Visualize 1 batch to verify DataLoader
+    # Visual check of one batch
     import torchvision.utils as vutils
     import torchvision.transforms as transforms
     import numpy as np
@@ -57,7 +57,6 @@ if __name__ == '__main__':
             plt.axis("off")
             plt.imshow(np.transpose(grid_a.cpu(), (1, 2, 0)))
             plt.show()
-
         if 'B' in sample_batch:
             grid_b = vutils.make_grid(sample_batch['B'], nrow=4, normalize=True)
             plt.figure(figsize=(10, 10))
@@ -66,10 +65,10 @@ if __name__ == '__main__':
             plt.imshow(np.transpose(grid_b.cpu(), (1, 2, 0)))
             plt.show()
 
-    model = create_model(opt)      # create model
-    model.setup(opt)               # setup model
-    visualizer = Visualizer(opt)  # visualizer
-    total_iters = 0                # training iteration counter
+    model = create_model(opt)
+    model.setup(opt)
+    visualizer = Visualizer(opt)
+    total_iters = 0
 
     for epoch in range(opt.epoch_count, opt.n_epochs + opt.n_epochs_decay + 1):
         epoch_start_time = time.time()
@@ -99,12 +98,17 @@ if __name__ == '__main__':
                 if opt.display_id > 0:
                     visualizer.plot_current_losses(epoch, float(epoch_iter) / dataset_size, losses)
 
-                # ✅ Manual wandb logging to ensure it works
+                # Manual WandB logging of scalar losses
                 if opt.use_wandb:
                     log_data = {f"loss_{k}": float(v) for k, v in losses.items()}
                     log_data["epoch"] = epoch
                     log_data["iters"] = epoch_iter
                     wandb.log(log_data)
+
+                    # New: log current visuals to WandB media
+                    visuals = model.get_current_visuals()
+                    img_logs = [wandb.Image(v, caption=k) for k, v in visuals.items()]
+                    wandb.log({"generated_images": img_logs}, step=total_iters)
 
             if total_iters % opt.save_latest_freq == 0:
                 print('saving the latest model (epoch %d, total_iters %d)' % (epoch, total_iters))
@@ -113,7 +117,6 @@ if __name__ == '__main__':
 
             iter_data_time = time.time()
 
-        # ✅ Update learning rate AFTER training loop (PyTorch recommendation)
         model.update_learning_rate()
 
         if epoch % opt.save_epoch_freq == 0:
@@ -123,30 +126,19 @@ if __name__ == '__main__':
 
         print('End of epoch %d / %d \t Time Taken: %d sec' % (epoch, opt.n_epochs + opt.n_epochs_decay, time.time() - epoch_start_time))
 
-    # 📈 Fetch and plot WandB losses
+    # Fetch and plot WandB losses
     if opt.use_wandb:
         try:
             from wandb import Api
             api = Api()
-            entity = "jackiechanchunki2852002-king-s-college-london"
-            project = opt.wandb_project_name
-            runs = api.runs(f"{entity}/{project}")
-            for r in runs:
-                if r.name == run_name:
-                    run = r
-                    break
-            else:
-                print("No matching run found in WandB.")
-                run = None
-
+            runs = api.runs(f"{opt.entity}/{opt.wandb_project_name}")
+            run = next((r for r in runs if r.name == run_name), None)
             if run:
                 history = run.history(samples=10000)
                 loss_cols = [col for col in history.columns if col.startswith("loss_")]
-
                 plt.figure(figsize=(15, 6))
                 for col in loss_cols:
-                    smoothed = history[col].rolling(window=10).mean()
-                    plt.plot(smoothed, label=col)
+                    plt.plot(history[col].rolling(window=10).mean(), label=col)
                 plt.xlabel("Iterations")
                 plt.ylabel("Loss")
                 plt.title("Smoothed Training Losses Over Time")
