@@ -4,6 +4,7 @@ import time
 import torch
 from tqdm import tqdm
 import wandb
+from datetime import datetime
 
 from options.train_options import TrainOptions
 from data import create_dataset
@@ -26,7 +27,9 @@ def main():
             wandb.login(key=api_key)
         else:
             wandb.login()
-        run_name = f"{opt.name}_{int(time.time())}"
+        # Create a timestamp for readability (e.g. 2025-04-27_15:33,18)
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H:%M,%S')
+        run_name = f"{opt.name}-{timestamp}"
         wandb.init(
             entity="jackiechanchunki2852002-king-s-college-london",
             project=opt.wandb_project_name,
@@ -34,7 +37,7 @@ def main():
             config=vars(opt),
             mode="online"
         )
-        # Save run identifiers
+        # Save run identifiers for later lookup
         with open("wandb_run_id.txt", "w") as f_id:
             f_id.write(wandb.run.id)
         with open("wandb_run_name.txt", "w") as f_name:
@@ -50,7 +53,7 @@ def main():
     else:
         print(f"Using user-defined num_threads: {opt.num_threads}")
 
-    # Create dataset (uses custom dataset and loader internally)
+    # Create dataset (handles resizing/cropping internally)
     dataset = create_dataset(opt)
     dataset_size = len(dataset)
     print(f"The number of training images = {dataset_size}")
@@ -59,11 +62,11 @@ def main():
     model = create_model(opt)
     model.setup(opt)
 
-    # Track iterations and best loss
+    # Iteration tracking
     total_iters = 0
     best_total_loss = float('inf')
 
-    # Training loop
+    # Training loop over epochs
     max_epochs = opt.n_epochs + opt.n_epochs_decay
     for epoch in range(opt.epoch_count, max_epochs + 1):
         pbar = tqdm(dataset, desc=f"Epoch {epoch}/{max_epochs}")
@@ -71,7 +74,7 @@ def main():
         for data in pbar:
             total_iters += opt.batch_size
 
-            # Forward and backward
+            # Forward/backward
             model.set_input(data)
             model.optimize_parameters()
 
@@ -82,26 +85,26 @@ def main():
                 img_logs = [wandb.Image(img, caption=label) for label, img in visuals.items()]
                 wandb.log({"sample_images": img_logs}, step=total_iters)
 
-            # Logging losses
+            # Log losses to W&B and console
             if getattr(opt, 'use_wandb', False) and total_iters % opt.print_freq == 0:
                 losses = model.get_current_losses()
                 wandb.log({f"loss/{k}": float(v) for k, v in losses.items()}, step=total_iters)
                 pbar.set_postfix({k: f"{v:.4f}" for k, v in losses.items()})
 
-                # Check for best model
+                # Best-model checkpoint
                 total_loss = sum(losses.values())
                 if total_loss < best_total_loss:
                     best_total_loss = total_loss
                     print(f"🏆 New best model at iter {total_iters} (loss={total_loss:.4f}). Saving...")
                     model.save_networks('best')
 
-            # Save latest checkpoint
+            # Save latest model checkpoint
             if total_iters % opt.save_latest_freq == 0:
                 print(f"💾 Saving latest model at iter {total_iters}")
-                suffix = f'iter_{total_iters}' if opt.save_by_iter else 'latest'
+                suffix = f"iter_{total_iters}" if opt.save_by_iter else 'latest'
                 model.save_networks(suffix)
 
-        # Update learning rate and save per-epoch checkpoints
+        # End of epoch: update LR and save epoch checkpoints
         model.update_learning_rate()
         if epoch % opt.save_epoch_freq == 0:
             print(f"💾 Saving model at epoch {epoch}")
