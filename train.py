@@ -2,7 +2,6 @@ import argparse
 import os
 import time
 import torch
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
 
@@ -22,15 +21,12 @@ def main():
 
     # Optional Weights & Biases setup
     if getattr(opt, 'use_wandb', False):
-        # Load API key from environment to skip interactive prompt in Colab
         api_key = os.getenv('WANDB_API_KEY')
         if api_key:
             wandb.login(key=api_key)
         else:
             wandb.login()
-        # Create a unique run name
         run_name = f"{opt.name}_{int(time.time())}"
-        # Initialize W&B run
         wandb.init(
             entity="jackiechanchunki2852002-king-s-college-london",
             project=opt.wandb_project_name,
@@ -38,7 +34,7 @@ def main():
             config=vars(opt),
             mode="online"
         )
-        # Save WandB run ID and run name to file for later retrieval in notebooks
+        # Save run identifiers
         with open("wandb_run_id.txt", "w") as f_id:
             f_id.write(wandb.run.id)
         with open("wandb_run_name.txt", "w") as f_name:
@@ -54,16 +50,8 @@ def main():
     else:
         print(f"Using user-defined num_threads: {opt.num_threads}")
 
-    # Dataset and DataLoader
+    # Create dataset (uses custom dataset and loader internally)
     dataset = create_dataset(opt)
-    loader = DataLoader(
-        dataset,
-        batch_size=opt.batch_size,
-        shuffle=True,
-        num_workers=opt.num_threads,
-        pin_memory=True,
-        prefetch_factor=2,
-    )
     dataset_size = len(dataset)
     print(f"The number of training images = {dataset_size}")
 
@@ -76,8 +64,10 @@ def main():
     best_total_loss = float('inf')
 
     # Training loop
-    for epoch in range(opt.epoch_count, opt.n_epochs + opt.n_epochs_decay + 1):
-        pbar = tqdm(loader, desc=f"Epoch {epoch}/{opt.n_epochs + opt.n_epochs_decay}")
+    max_epochs = opt.n_epochs + opt.n_epochs_decay
+    for epoch in range(opt.epoch_count, max_epochs + 1):
+        pbar = tqdm(dataset, desc=f"Epoch {epoch}/{max_epochs}")
+
         for data in pbar:
             total_iters += opt.batch_size
 
