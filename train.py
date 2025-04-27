@@ -28,8 +28,9 @@ def main():
             wandb.login(key=api_key)
         else:
             wandb.login()
-        # Initialize W&B run
+        # Create a unique run name
         run_name = f"{opt.name}_{int(time.time())}"
+        # Initialize W&B run
         wandb.init(
             entity="jackiechanchunki2852002-king-s-college-london",
             project=opt.wandb_project_name,
@@ -37,9 +38,11 @@ def main():
             config=vars(opt),
             mode="online"
         )
-        # Save WandB run ID
-        with open("wandb_run_id.txt", "w") as f:
-            f.write(wandb.run.id)
+        # Save WandB run ID and run name to file for later retrieval in notebooks
+        with open("wandb_run_id.txt", "w") as f_id:
+            f_id.write(wandb.run.id)
+        with open("wandb_run_name.txt", "w") as f_name:
+            f_name.write(run_name)
 
     # Override num_threads if provided via CLI or Colab
     if cli_args.threads is not None:
@@ -74,12 +77,9 @@ def main():
 
     # Training loop
     for epoch in range(opt.epoch_count, opt.n_epochs + opt.n_epochs_decay + 1):
-        epoch_iter = 0
         pbar = tqdm(loader, desc=f"Epoch {epoch}/{opt.n_epochs + opt.n_epochs_decay}")
-
         for data in pbar:
             total_iters += opt.batch_size
-            epoch_iter += opt.batch_size
 
             # Forward and backward
             model.set_input(data)
