@@ -21,6 +21,7 @@ def main():
     opt = TrainOptions().parse()
 
     # Optional Weights & Biases setup
+    run_name = None
     if getattr(opt, 'use_wandb', False):
         api_key = os.getenv('WANDB_API_KEY')
         if api_key:
@@ -37,6 +38,10 @@ def main():
             config=vars(opt),
             mode="online"
         )
+        # Print W&B run URL for easy access
+        print(f"🚀 W&B run: {wandb.run.name} -> {wandb.run.url}")
+        # System & Hardware Metrics: watch model for gradients and weights
+        wandb.watch(None, log="all", log_freq=opt.print_freq)
         # Save run identifiers for later lookup
         with open("wandb_run_id.txt", "w") as f_id:
             f_id.write(wandb.run.id)
@@ -97,12 +102,22 @@ def main():
                     best_total_loss = total_loss
                     print(f"🏆 New best model at iter {total_iters} (loss={total_loss:.4f}). Saving...")
                     model.save_networks('best')
+                    # Log best-model checkpoint as W&B artifact
+                    if run_name:
+                        artifact = wandb.Artifact(f"{run_name}-best", type="model")
+                        artifact.add_dir(os.path.join("checkpoints", opt.name))
+                        wandb.log_artifact(artifact)
 
             # Save latest model checkpoint
             if total_iters % opt.save_latest_freq == 0:
                 print(f"💾 Saving latest model at iter {total_iters}")
                 suffix = f"iter_{total_iters}" if opt.save_by_iter else 'latest'
                 model.save_networks(suffix)
+                # Log latest checkpoint as W&B artifact
+                if run_name:
+                    artifact = wandb.Artifact(f"{run_name}-latest-{suffix}", type="model")
+                    artifact.add_dir(os.path.join("checkpoints", opt.name))
+                    wandb.log_artifact(artifact)
 
         # End of epoch: update LR and save epoch checkpoints
         model.update_learning_rate()
@@ -110,6 +125,11 @@ def main():
             print(f"💾 Saving model at epoch {epoch}")
             model.save_networks('latest')
             model.save_networks(str(epoch))
+            # Log epoch checkpoint as W&B artifact
+            if run_name:
+                artifact = wandb.Artifact(f"{run_name}-epoch_{epoch}", type="model")
+                artifact.add_dir(os.path.join("checkpoints", opt.name))
+                wandb.log_artifact(artifact)
 
     print("Training complete.")
 
