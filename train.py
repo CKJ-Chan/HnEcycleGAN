@@ -1,21 +1,47 @@
+import argparse
+import os
 import time
-import datetime
-import matplotlib.pyplot as plt
+import torch
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+import wandb
+
 from options.train_options import TrainOptions
 from data import create_dataset
 from models import create_model
-from util.visualizer import Visualizer
-import argparse
 
-if __name__ == '__main__':
+
+def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--threads', type=int, default=None, help='Override number of DataLoader workers')
+    parser.add_argument('--threads', type=int, default=None,
+                        help='Override number of DataLoader workers')
     cli_args, _ = parser.parse_known_args()
 
+    # Parse training options
     opt = TrainOptions().parse()
 
-    # DataLoader threads override for Colab
-    import os
+    # Optional Weights & Biases setup
+    if getattr(opt, 'use_wandb', False):
+        # Load API key from environment to skip interactive prompt in Colab
+        api_key = os.getenv('WANDB_API_KEY')
+        if api_key:
+            wandb.login(key=api_key)
+        else:
+            wandb.login()
+        # Initialize W&B run
+        run_name = f"{opt.name}_{int(time.time())}"
+        wandb.init(
+            entity="jackiechanchunki2852002-king-s-college-london",
+            project=opt.wandb_project_name,
+            name=run_name,
+            config=vars(opt),
+            mode="online"
+        )
+        # Save WandB run ID
+        with open("wandb_run_id.txt", "w") as f:
+            f.write(wandb.run.id)
+
+    # Override num_threads if provided via CLI or Colab
     if cli_args.threads is not None:
         opt.num_threads = cli_args.threads
         print(f"Overriding num_threads from CLI: {opt.num_threads}")
@@ -25,130 +51,75 @@ if __name__ == '__main__':
     else:
         print(f"Using user-defined num_threads: {opt.num_threads}")
 
-    # Auto-name WandB run
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_name = f"breastUV2HE_{timestamp}"
-
-    import wandb
-    if opt.use_wandb:
-        wandb.init(
-            entity="jackiechanchunki2852002-king-s-college-london",
-            project=opt.wandb_project_name,
-            name=run_name,
-            config=vars(opt),
-            mode="online"
-        )
-        # Save WandB run ID to file for later retrieval
-        with open("wandb_run_id.txt", "w") as f:
-            f.write(wandb.run.id)
-
+    # Dataset and DataLoader
     dataset = create_dataset(opt)
+    loader = DataLoader(
+        dataset,
+        batch_size=opt.batch_size,
+        shuffle=True,
+        num_workers=opt.num_threads,
+        pin_memory=True,
+        prefetch_factor=2,
+    )
     dataset_size = len(dataset)
-    print('The number of training images = %d' % dataset_size)
+    print(f"The number of training images = {dataset_size}")
 
-    # Visual check of one batch
-    import torchvision.utils as vutils
-    import torchvision.transforms as transforms
-    import numpy as np
-
-    sample_batch = next(iter(dataset))
-    if isinstance(sample_batch, dict):
-        if 'A' in sample_batch:
-            grid_a = vutils.make_grid(sample_batch['A'], nrow=4, normalize=True)
-            plt.figure(figsize=(10, 10))
-            plt.title("Sample Batch from trainA")
-            plt.axis("off")
-            plt.imshow(np.transpose(grid_a.cpu(), (1, 2, 0)))
-            plt.show()
-        if 'B' in sample_batch:
-            grid_b = vutils.make_grid(sample_batch['B'], nrow=4, normalize=True)
-            plt.figure(figsize=(10, 10))
-            plt.title("Sample Batch from trainB")
-            plt.axis("off")
-            plt.imshow(np.transpose(grid_b.cpu(), (1, 2, 0)))
-            plt.show()
-
+    # Model setup
     model = create_model(opt)
     model.setup(opt)
-    visualizer = Visualizer(opt)
+
+    # Track iterations and best loss
     total_iters = 0
+    best_total_loss = float('inf')
 
+    # Training loop
     for epoch in range(opt.epoch_count, opt.n_epochs + opt.n_epochs_decay + 1):
-        epoch_start_time = time.time()
-        iter_data_time = time.time()
         epoch_iter = 0
-        visualizer.reset()
+        pbar = tqdm(loader, desc=f"Epoch {epoch}/{opt.n_epochs + opt.n_epochs_decay}")
 
-        for i, data in enumerate(dataset):
-            iter_start_time = time.time()
-            if total_iters % opt.print_freq == 0:
-                t_data = iter_start_time - iter_data_time
-
+        for data in pbar:
             total_iters += opt.batch_size
             epoch_iter += opt.batch_size
+
+            # Forward and backward
             model.set_input(data)
             model.optimize_parameters()
 
-            if total_iters % opt.display_freq == 0:
-                save_result = total_iters % opt.update_html_freq == 0
+            # Log sample images to W&B
+            if getattr(opt, 'use_wandb', False) and total_iters % opt.display_freq == 0:
                 model.compute_visuals()
-                visualizer.display_current_results(model.get_current_visuals(), epoch, save_result)
+                visuals = model.get_current_visuals()
+                img_logs = [wandb.Image(img, caption=label) for label, img in visuals.items()]
+                wandb.log({"sample_images": img_logs}, step=total_iters)
 
-            if total_iters % opt.print_freq == 0:
+            # Logging losses
+            if getattr(opt, 'use_wandb', False) and total_iters % opt.print_freq == 0:
                 losses = model.get_current_losses()
-                t_comp = (time.time() - iter_start_time) / opt.batch_size
-                visualizer.print_current_losses(epoch, epoch_iter, losses, t_comp, t_data)
-                if opt.display_id > 0:
-                    visualizer.plot_current_losses(epoch, float(epoch_iter) / dataset_size, losses)
+                wandb.log({f"loss/{k}": float(v) for k, v in losses.items()}, step=total_iters)
+                pbar.set_postfix({k: f"{v:.4f}" for k, v in losses.items()})
 
-                # Manual WandB logging of scalar losses
-                if opt.use_wandb:
-                    log_data = {f"loss_{k}": float(v) for k, v in losses.items()}
-                    log_data["epoch"] = epoch
-                    log_data["iters"] = epoch_iter
-                    wandb.log(log_data)
+                # Check for best model
+                total_loss = sum(losses.values())
+                if total_loss < best_total_loss:
+                    best_total_loss = total_loss
+                    print(f"🏆 New best model at iter {total_iters} (loss={total_loss:.4f}). Saving...")
+                    model.save_networks('best')
 
-                    # New: log current visuals to WandB media
-                    visuals = model.get_current_visuals()
-                    img_logs = [wandb.Image(v, caption=k) for k, v in visuals.items()]
-                    wandb.log({"generated_images": img_logs}, step=total_iters)
-
+            # Save latest checkpoint
             if total_iters % opt.save_latest_freq == 0:
-                print('saving the latest model (epoch %d, total_iters %d)' % (epoch, total_iters))
-                save_suffix = 'iter_%d' % total_iters if opt.save_by_iter else 'latest'
-                model.save_networks(save_suffix)
+                print(f"💾 Saving latest model at iter {total_iters}")
+                suffix = f'iter_{total_iters}' if opt.save_by_iter else 'latest'
+                model.save_networks(suffix)
 
-            iter_data_time = time.time()
-
+        # Update learning rate and save per-epoch checkpoints
         model.update_learning_rate()
-
         if epoch % opt.save_epoch_freq == 0:
-            print('saving the model at the end of epoch %d, iters %d' % (epoch, total_iters))
+            print(f"💾 Saving model at epoch {epoch}")
             model.save_networks('latest')
-            model.save_networks(epoch)
+            model.save_networks(str(epoch))
 
-        print('End of epoch %d / %d \t Time Taken: %d sec' % (epoch, opt.n_epochs + opt.n_epochs_decay, time.time() - epoch_start_time))
+    print("Training complete.")
 
-    # Fetch and plot WandB losses
-    if opt.use_wandb:
-        try:
-            from wandb import Api
-            api = Api()
-            runs = api.runs(f"{opt.entity}/{opt.wandb_project_name}")
-            run = next((r for r in runs if r.name == run_name), None)
-            if run:
-                history = run.history(samples=10000)
-                loss_cols = [col for col in history.columns if col.startswith("loss_")]
-                plt.figure(figsize=(15, 6))
-                for col in loss_cols:
-                    plt.plot(history[col].rolling(window=10).mean(), label=col)
-                plt.xlabel("Iterations")
-                plt.ylabel("Loss")
-                plt.title("Smoothed Training Losses Over Time")
-                plt.legend()
-                plt.grid(True)
-                plt.tight_layout()
-                plt.savefig("wandb_loss_plot.png")
-                plt.show()
-        except Exception as e:
-            print(f"⚠️ Could not fetch WandB history: {e}")
+
+if __name__ == '__main__':
+    main()
