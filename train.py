@@ -41,7 +41,7 @@ def main():
         # Print W&B run URL for easy access
         print(f"🚀 W&B run: {wandb.run.name} -> {wandb.run.url}")
         # System & Hardware Metrics: watch model for gradients and weights
-        wandb.watch(None, log="all", log_freq=opt.print_freq)
+        wandb.watch(model, log="all", log_freq=opt.print_freq)
         # Save run identifiers for later lookup
         with open("wandb_run_id.txt", "w") as f_id:
             f_id.write(wandb.run.id)
