@@ -43,7 +43,6 @@ def main():
             config=vars(opt),
             mode="online"
         )
-        import os
 
         outdir = "/content/drive/MyDrive/CycleGAN_Data/logs"
         os.makedirs(outdir, exist_ok=True)
