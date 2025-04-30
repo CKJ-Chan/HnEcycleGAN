@@ -51,7 +51,6 @@ def main():
         with open("wandb_run_name.txt", "w") as f_name: f_name.write(run_name)
         print(f"✔️ W&B run files written: wandb_run_id.txt & wandb_run_name.txt")
         print(f"🚀 W&B run: {run_name} → {wandb.run.url}")
-        !ls -l /content/drive/MyDrive/CycleGAN_Data/logs
 
         # ────────────────────────────────
 
