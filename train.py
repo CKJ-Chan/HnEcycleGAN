@@ -46,6 +46,23 @@ def main():
             name=run_name,
             config=vars(opt),
             mode="online"
+        # 1) Create dataset
+        dataset = create_dataset(opt)
+        dataset_size = len(dataset)
+        print(f"The number of training images = {dataset_size}")
+
+        # 2) Create and setup model
+        model = create_model(opt)
+        model.setup(opt)
+
+        # 3) Only watch the real PyTorch modules, not the wrapper
+        if getattr(opt, 'use_wandb', False):
+            # watch generators
+            wandb.watch(model.netG_A, log="all", log_freq=opt.print_freq)
+            wandb.watch(model.netG_B, log="all", log_freq=opt.print_freq)
+            # optionally, watch discriminators too:
+            wandb.watch(model.netD_A, log="all", log_freq=opt.print_freq)
+            wandb.watch(model.netD_B, log="all", log_freq=opt.print_freq)
         )
 
         # write run ID & name into the repo root
