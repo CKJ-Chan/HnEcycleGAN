@@ -57,4 +57,109 @@ def main():
 
                 with open(run_id_path, "w") as f_id:
                     f_id.write(wandb.run.id)
-                with o
+                with open(run_name_path, "w") as f_name:
+                    f_name.write(wandb.run.name)
+
+                # Debug output
+                print("🚨 After write, contents:", os.listdir(BASE_DIR))
+                print(f"🚨 Wrote run ID → {run_id_path}")
+                print(f"🚨 Wrote run Name → {run_name_path}")
+            except Exception as e:
+                print(f"⚠️ Failed to write W&B run files: {e}")
+        else:
+            print("⚠️ Warning: wandb.run is None; cannot write ID/name to file.")
+
+    # Override num_threads if desired…
+    if cli_args.threads is not None:
+        opt.num_threads = cli_args.threads
+        print(f"Overriding num_threads to {opt.num_threads}")
+    elif 'COLAB_GPU' in os.environ and opt.num_threads == 4:
+        opt.num_threads = 2
+        print("Colab detected: setting num_threads to 2")
+    else:
+        print(f"Using num_threads = {opt.num_threads}")
+
+    # Create dataset and model…
+    dataset = create_dataset(opt)
+    print(f"The number of training images = {len(dataset)}")
+
+    model = create_model(opt)
+    model.setup(opt)
+
+    # ✅ Watch specific PyTorch modules if using W&B
+    if run_name is not None:
+        if hasattr(model, 'netG_A'):
+            wandb.watch(model.netG_A, log="all", log_freq=opt.print_freq)
+        if hasattr(model, 'netG_B'):
+            wandb.watch(model.netG_B, log="all", log_freq=opt.print_freq)
+        if hasattr(model, 'netD_A'):
+            wandb.watch(model.netD_A, log="all", log_freq=opt.print_freq)
+        if hasattr(model, 'netD_B'):
+            wandb.watch(model.netD_B, log="all", log_freq=opt.print_freq)
+
+    # Track iterations and best loss
+    total_iters = 0
+    best_total_loss = float('inf')
+
+    # Training loop
+    max_epochs = opt.n_epochs + opt.n_epochs_decay
+    for epoch in range(opt.epoch_count, max_epochs + 1):
+        pbar = tqdm(dataset, desc=f"Epoch {epoch}/{max_epochs}")
+
+        for data in pbar:
+            total_iters += opt.batch_size
+
+            # Forward and backward
+            model.set_input(data)
+            model.optimize_parameters()
+
+            # Log sample images to W&B
+            if run_name and total_iters % opt.display_freq == 0:
+                model.compute_visuals()
+                visuals = model.get_current_visuals()
+                img_logs = [wandb.Image(img, caption=label) for label, img in visuals.items()]
+                wandb.log({"sample_images": img_logs}, step=total_iters)
+
+            # Log losses to W&B and console
+            if run_name and total_iters % opt.print_freq == 0:
+                losses = model.get_current_losses()
+                wandb.log({f"loss/{k}": float(v) for k, v in losses.items()}, step=total_iters)
+                pbar.set_postfix({k: f"{v:.4f}" for k, v in losses.items()})
+
+                # Best-model checkpoint
+                total_loss = sum(losses.values())
+                if total_loss < best_total_loss:
+                    best_total_loss = total_loss
+                    print(f"🏆 New best model at iter {total_iters} (loss={total_loss:.4f}). Saving...")
+                    model.save_networks('best')
+                    # Log best-model checkpoint as W&B artifact
+                    artifact = wandb.Artifact(f"{run_name}-best", type="model")
+                    artifact.add_dir(os.path.join("checkpoints", opt.name))
+                    wandb.log_artifact(artifact)
+
+            # Save latest model checkpoint
+            if total_iters % opt.save_latest_freq == 0:
+                print(f"💾 Saving latest model at iter {total_iters}")
+                suffix = f"iter_{total_iters}" if opt.save_by_iter else 'latest'
+                model.save_networks(suffix)
+                # Log latest checkpoint as W&B artifact
+                artifact = wandb.Artifact(f"{run_name}-latest-{suffix}", type="model")
+                artifact.add_dir(os.path.join("checkpoints", opt.name))
+                wandb.log_artifact(artifact)
+
+        # End of epoch: update LR and save epoch checkpoints
+        model.update_learning_rate()
+        if epoch % opt.save_epoch_freq == 0:
+            print(f"💾 Saving model at epoch {epoch}")
+            model.save_networks('latest')
+            model.save_networks(str(epoch))
+            # Log epoch checkpoint as W&B artifact
+            artifact = wandb.Artifact(f"{run_name}-epoch_{epoch}", type="model")
+            artifact.add_dir(os.path.join("checkpoints", opt.name))
+            wandb.log_artifact(artifact)
+
+    print("✅ Training complete.")
+
+
+if __name__ == '__main__':
+    main()
