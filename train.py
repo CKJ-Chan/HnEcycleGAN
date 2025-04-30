@@ -10,6 +10,10 @@ from options.train_options import TrainOptions
 from data import create_dataset
 from models import create_model
 
+# DEBUG: print current working dir
+print("🚨 train.py working dir:", os.getcwd())
+print("🚨 Contents before anything:", os.listdir(os.getcwd()))
+
 # Compute the directory containing this script
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -44,20 +48,21 @@ def main():
             mode="online"
         )
 
-        outdir = "/content/drive/MyDrive/CycleGAN_Data/logs"
-        os.makedirs(outdir, exist_ok=True)
-        print("✅ Ensured logs dir exists:", outdir)
-        
-        # 1) Build exact paths
+        # write run ID & name into the repo root
+        BASE_DIR = os.getcwd()  # this should match the above cwd
         run_id_path   = os.path.join(BASE_DIR, "wandb_run_id.txt")
         run_name_path = os.path.join(BASE_DIR, "wandb_run_name.txt")
         
-        # 2) Write them out
-        with open(run_id_path,   "w") as f_id:   f_id.write(wandb.run.id)
-        with open(run_name_path, "w") as f_name: f_name.write(wandb.run.name)
+        with open(run_id_path,   "w") as f_id:
+            f_id.write(wandb.run.id)
+        with open(run_name_path, "w") as f_name:
+            f_name.write(wandb.run.name)
         
-        print(f"✔️ Wrote run-ID to {run_id_path}")
-        print(f"✔️ Wrote run-name to {run_name_path}")
+        # DEBUG: confirm they’re there now
+        print("🚨 After write, contents:", os.listdir(BASE_DIR))
+        print(f"🚨 Wrote run ID → {run_id_path}")
+        print(f"🚨 Wrote run Name → {run_name_path}")
+
 
     # Override num_threads if desired…
     if cli_args.threads is not None:
