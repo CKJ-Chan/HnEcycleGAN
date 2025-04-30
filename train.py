@@ -9,6 +9,10 @@ from datetime import datetime
 from options.train_options import TrainOptions
 from data import create_dataset
 from models import create_model
+
+# Compute the directory containing this script
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--threads', type=int, default=None,
@@ -45,14 +49,16 @@ def main():
         os.makedirs(outdir, exist_ok=True)
         print("✅ Ensured logs dir exists:", outdir)
         
-        # ←─── Highlighted addition ───→
-        # write out the run ID and run name so your notebook can pick them up
-        with open("wandb_run_id.txt",   "w") as f_id:   f_id.write(wandb.run.id)
-        with open("wandb_run_name.txt", "w") as f_name: f_name.write(run_name)
-        print(f"✔️ W&B run files written: wandb_run_id.txt & wandb_run_name.txt")
-        print(f"🚀 W&B run: {run_name} → {wandb.run.url}")
-
-        # ────────────────────────────────
+        # 1) Build exact paths
+        run_id_path   = os.path.join(BASE_DIR, "wandb_run_id.txt")
+        run_name_path = os.path.join(BASE_DIR, "wandb_run_name.txt")
+        
+        # 2) Write them out
+        with open(run_id_path,   "w") as f_id:   f_id.write(wandb.run.id)
+        with open(run_name_path, "w") as f_name: f_name.write(wandb.run.name)
+        
+        print(f"✔️ Wrote run-ID to {run_id_path}")
+        print(f"✔️ Wrote run-name to {run_name_path}")
 
     # Override num_threads if desired…
     if cli_args.threads is not None:
