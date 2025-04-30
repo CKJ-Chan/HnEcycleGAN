@@ -46,40 +46,28 @@ def main():
             name=run_name,
             config=vars(opt),
             mode="online"
-        # 1) Create dataset
-        dataset = create_dataset(opt)
-        dataset_size = len(dataset)
-        print(f"The number of training images = {dataset_size}")
-
-        # 2) Create and setup model
-        model = create_model(opt)
-        model.setup(opt)
-
-        # 3) Only watch the real PyTorch modules, not the wrapper
-        if getattr(opt, 'use_wandb', False):
-            # watch generators
-            wandb.watch(model.netG_A, log="all", log_freq=opt.print_freq)
-            wandb.watch(model.netG_B, log="all", log_freq=opt.print_freq)
-            # optionally, watch discriminators too:
-            wandb.watch(model.netD_A, log="all", log_freq=opt.print_freq)
-            wandb.watch(model.netD_B, log="all", log_freq=opt.print_freq)
         )
 
-        # write run ID & name into the repo root
-        BASE_DIR = os.getcwd()  # this should match the above cwd
-        run_id_path   = os.path.join(BASE_DIR, "wandb_run_id.txt")
-        run_name_path = os.path.join(BASE_DIR, "wandb_run_name.txt")
-        
-        with open(run_id_path,   "w") as f_id:
-            f_id.write(wandb.run.id)
-        with open(run_name_path, "w") as f_name:
-            f_name.write(wandb.run.name)
-        
-        # DEBUG: confirm they’re there now
-        print("🚨 After write, contents:", os.listdir(BASE_DIR))
-        print(f"🚨 Wrote run ID → {run_id_path}")
-        print(f"🚨 Wrote run Name → {run_name_path}")
+        # ✅ Write run ID & name into the repo root directory
+        if wandb.run is not None:
+            try:
+                BASE_DIR = os.getcwd()  # current working directory
+                run_id_path = os.path.join(BASE_DIR, "wandb_run_id.txt")
+                run_name_path = os.path.join(BASE_DIR, "wandb_run_name.txt")
 
+                with open(run_id_path, "w") as f_id:
+                    f_id.write(wandb.run.id)
+                with open(run_name_path, "w") as f_name:
+                    f_name.write(wandb.run.name)
+
+                # Debug output
+                print("🚨 After write, contents:", os.listdir(BASE_DIR))
+                print(f"🚨 Wrote run ID → {run_id_path}")
+                print(f"🚨 Wrote run Name → {run_name_path}")
+            except Exception as e:
+                print(f"⚠️ Failed to write W&B run files: {e}")
+        else:
+            print("⚠️ Warning: wandb.run is None; cannot write ID/name to file.")
 
     # Override num_threads if desired…
     if cli_args.threads is not None:
