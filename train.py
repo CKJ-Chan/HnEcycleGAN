@@ -1,16 +1,3 @@
-import argparse
-import os
-import time
-import torch
-from tqdm import tqdm
-import wandb
-from datetime import datetime
-
-from options.train_options import TrainOptions
-from data import create_dataset
-from models import create_model
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--threads', type=int, default=None,
@@ -20,18 +7,20 @@ def main():
     # Parse training options
     opt = TrainOptions().parse()
 
-    # Optional Weights & Biases setup
     run_name = None
     if getattr(opt, 'use_wandb', False):
+        # log in
         api_key = os.getenv('WANDB_API_KEY')
         if api_key:
             wandb.login(key=api_key)
         else:
             wandb.login()
-        # Create a timestamp for readability (e.g. 2025-04-27_15:33,18)
+
+        # create a human-readable name
         timestamp = datetime.now().strftime('%Y-%m-%d_%H:%M,%S')
         run_name = f"{opt.name}-{timestamp}"
-        # Initialize W&B
+
+        # initialize W&B run
         wandb.init(
             entity="jackiechanchunki2852002-king-s-college-london",
             project=opt.wandb_project_name,
@@ -39,38 +28,35 @@ def main():
             config=vars(opt),
             mode="online"
         )
-        # Immediately write run identifiers so files exist upfront
-        run_id = wandb.run.id
-        id_path = os.path.join(os.getcwd(), "wandb_run_id.txt")
-        name_path = os.path.join(os.getcwd(), "wandb_run_name.txt")
-        with open(id_path, "w") as f_id:
-            f_id.write(run_id)
-        with open(name_path, "w") as f_name:
-            f_name.write(run_name)
-        print(f"✔️ W&B run files written to {id_path} and {name_path}")
-        # Print W&B run URL for easy access
-        print(f"🚀 W&B run: {run_name} -> {wandb.run.url}")
-        # System & Hardware Metrics: watch model for gradients and weights will be set after model setup
 
-    # Override num_threads if provided via CLI or Colab
+        # ←─── Highlighted addition ───→
+        # write out the run ID and run name so your notebook can pick them up
+        with open("wandb_run_id.txt",   "w") as f_id:   f_id.write(wandb.run.id)
+        with open("wandb_run_name.txt", "w") as f_name: f_name.write(run_name)
+        print(f"✔️ W&B run files written: wandb_run_id.txt & wandb_run_name.txt")
+        print(f"🚀 W&B run: {run_name} → {wandb.run.url}")
+        # ────────────────────────────────
+
+    # Override num_threads if desired…
     if cli_args.threads is not None:
+        opt.num_threads = cli_args.threads
+        print(f"Overriding num_threads to {opt.num_threads}")
+    elif 'COLAB_GPU' in os.environ and opt.num_threads == 4:
+        opt.num_threads = 2
+        print("Colab detected: setting num_threads to 2")
+    else:
+        print(f"Using num_threads = {opt.num_threads}")
 
+    # Create dataset and model…
     dataset = create_dataset(opt)
-    dataset_size = len(dataset)
-    print(f"The number of training images = {dataset_size}")
+    print(f"The number of training images = {len(dataset)}")
 
-    # Model setup
     model = create_model(opt)
     model.setup(opt)
 
-    # If using W&B, watch the model and save run identifiers
+    # Watch model if using W&B
     if run_name is not None:
         wandb.watch(model, log="all", log_freq=opt.print_freq)
-        # Save run identifiers for later lookup
-        with open("wandb_run_id.txt", "w") as f_id:
-            f_id.write(wandb.run.id)
-        with open("wandb_run_name.txt", "w") as f_name:
-            f_name.write(run_name)
 
     # Track iterations and best loss
     total_iters = 0
