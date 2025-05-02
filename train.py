@@ -7,14 +7,14 @@ import torch
 from tqdm import tqdm
 import wandb
 
-import psutil  # ✅ ADDED
-import GPUtil  # ✅ ADDED
+import psutil  # ✅ Resource monitoring
+import GPUtil  # ✅ GPU monitoring
 
 from options.train_options import TrainOptions
 from data import create_dataset
 from models import create_model
 
-# ✅ ADDED: Resource monitoring function
+# ✅ Resource monitoring function
 def monitor_resources():
     cpu = psutil.cpu_percent(interval=1)
     mem = psutil.virtual_memory().percent
@@ -46,7 +46,7 @@ def main():
         api_key = os.getenv('WANDB_API_KEY')
         wandb.login(key=api_key) if api_key else wandb.login()
 
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H:%M,%S')
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
         run_name = f"{opt.name}-{timestamp}"
         wandb.init(
             entity="jackiechanchunki2852002-king-s-college-london",
@@ -55,16 +55,7 @@ def main():
             config=vars(opt),
             mode="online"
         )
-
-        # Save run ID and name to files
-        try:
-            with open("wandb_run_id.txt", "w") as f:
-                f.write(wandb.run.id)
-            with open("wandb_run_name.txt", "w") as f:
-                f.write(wandb.run.name)
-            print("✅ Wrote W&B run ID and name to local files.")
-        except Exception as e:
-            print(f"⚠️ Failed to write wandb files: {e}")
+        print(f"✅ W&B run started: {run_name}")
 
     # Create dataset and model
     dataset = create_dataset(opt)
@@ -83,24 +74,23 @@ def main():
             model.set_input(data)
             model.optimize_parameters()
 
-            # ✅ ADDED: Monitor resources every 100 iterations
+            # Monitor system resources
             if total_iters % 100 == 0:
                 monitor_resources()
 
-            # Visuals
+            # Log visuals to WandB
             if run_name and total_iters % opt.display_freq == 0:
                 model.compute_visuals()
                 visuals = model.get_current_visuals()
                 img_logs = [wandb.Image(img, caption=label) for label, img in visuals.items()]
                 wandb.log({"sample_images": img_logs}, step=total_iters)
 
-            # Losses
+            # Log losses to WandB
             if run_name and total_iters % opt.print_freq == 0:
                 losses = model.get_current_losses()
                 wandb.log({f"loss/{k}": float(v) for k, v in losses.items()}, step=total_iters)
                 pbar.set_postfix({k: f"{v:.4f}" for k, v in losses.items()})
 
-        # End of epoch
         model.update_learning_rate()
 
     print("✅ Training complete.")
