@@ -1,28 +1,4 @@
-#!/usr/bin/env python3
-"""
-Enhanced test.py with WandB monitoring and optional resource tracking.
-This version mirrors the logging conveniences you added to train.py so that
-inference runs ("test" phase) are also tracked, visualised and reproducible.
 
-Key additions
--------------
-1. **WandB login / run initialisation** with timestamp‑based run names.
-2. **Image logging** — every few test samples are pushed as `wandb.Image` arrays.
-3. **Resource monitoring** (CPU/GPU/RAM) at configurable intervals.
-4. **Automatic HTML + artefact upload** so results survive beyond the Colab VM.
-
-Usage example
--------------
-```bash
-python enhanced_test.py \
-  --dataroot ./datasets/Breast_UV2HE/testA \
-  --name breastUV2HE \
-  --model test \
-  --use_wandb \
-  --wandb_project_name CycleGAN-BreastUV2HE
-```
-You can still pass all the usual `TestOptions` arguments.
-"""
 import os
 import time
 from datetime import datetime
