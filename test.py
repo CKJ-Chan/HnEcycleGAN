@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+"""Enhanced test.py for CycleGAN
+-------------------------------------------------
+Adds:
+• WandB logging (images + artefact)
+• CPU/GPU resource monitoring
+• Quantitative metrics (SSIM & FID)
+"""
 
 import os
 import time
@@ -12,62 +20,56 @@ from models import create_model
 from util.visualizer import save_images
 from util import html
 
+# ── Metrics
+from torchmetrics.image import StructuralSimilarityIndexMeasure, FrechetInceptionDistance
+import torchvision.transforms as T
+
 try:
     import wandb
-except ImportError:  # graceful degradation if wandb isn’t installed
+except ImportError:
     wandb = None
     print("⚠️  wandb package not found — disabling WandB logging.")
-
 
 # ---------------------------------------------------------------
 # Helper: resource‑usage print‑out every N iterations
 # ---------------------------------------------------------------
 
 def monitor_resources():
-    """Print a one‑line snapshot of CPU, RAM and every visible GPU."""
     cpu = psutil.cpu_percent(interval=1)
     mem = psutil.virtual_memory().percent
-
     try:
         gpus = GPUtil.getGPUs()
         for gpu in gpus:
             print(
-                f"🔍 GPU {gpu.id} ({gpu.name}) — "
-                f"Load: {gpu.load * 100:.1f}%, "
-                f"Mem: {gpu.memoryUtil * 100:.1f}%, "
-                f"Temp: {gpu.temperature}°C"
+                f"🔍 GPU {gpu.id} ({gpu.name}) — Load: {gpu.load*100:.1f}%, "
+                f"Mem: {gpu.memoryUtil*100:.1f}%, Temp: {gpu.temperature}°C"
             )
     except Exception as e:
         print("GPU info error:", e)
-
     print(f"🧠 CPU: {cpu:.1f}% | RAM: {mem:.1f}%")
-
 
 # ---------------------------------------------------------------
 # Main inference routine
 # ---------------------------------------------------------------
 
 def main():
-    opt = TestOptions().parse()  # ↳ inherits --use_wandb, --wandb_project_name, etc.
+    opt = TestOptions().parse()
 
-    # Hard‑coded test‑time tweaks (same as the original script)
-    opt.num_threads = 0           # deterministic order
-    opt.batch_size = 1            # test code only supports BS=1
-    opt.serial_batches = True     # no shuffling
-    opt.no_flip = True            # no random flip
-    opt.display_id = -1           # disable visdom
+    # Hard‑coded test‑time tweaks
+    opt.num_threads = 0
+    opt.batch_size = 1
+    opt.serial_batches = True
+    opt.no_flip = True
+    opt.display_id = -1
 
-    # ----------------------------------
-    # WandB initialisation (if enabled)
-    # ----------------------------------
+    # ── WandB init ──────────────────────────────────────────────
     run_name = None
     if getattr(opt, "use_wandb", False) and wandb is not None:
-        # Attempt login (API key can live in env or be interactive)
         api_key = os.getenv("WANDB_API_KEY")
         try:
             wandb.login(key=api_key) if api_key else wandb.login()
-        except wandb.UsageError:
-            print("⚠️  WandB login failed — continuing without WandB.")
+        except Exception:
+            print("⚠️  WandB login failed — disabling WandB.")
             opt.use_wandb = False
         else:
             timestamp = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
@@ -81,38 +83,27 @@ def main():
             )
             print(f"✅ W&B test run started: {run_name}")
 
-    # ----------------------------------
-    # Data + model setup
-    # ----------------------------------
+    # ── Data + model ────────────────────────────────────────────
     dataset = create_dataset(opt)
     model = create_model(opt)
     model.setup(opt)
-
     if opt.eval:
-        model.eval()  # ensure eval mode for BN / Dropout layers
+        model.eval()
 
-    # ----------------------------------
-    # Result directory (HTML website)
-    # ----------------------------------
-    web_dir = os.path.join(
-        opt.results_dir,
-        opt.name,
-        f"{opt.phase}_{opt.epoch if opt.epoch else 'latest'}",
-    )
+    # ── Metric trackers ─────────────────────────────────────────
+    ssim_metric = StructuralSimilarityIndexMeasure(data_range=1.0).to(model.device)
+    fid_metric = FrechetInceptionDistance(feature=64).to(model.device)
+    to01 = T.Compose([T.ToPILImage(), T.Resize(opt.crop_size), T.ToTensor()])
+
+    # ── HTML result dir ─────────────────────────────────────────
+    web_dir = os.path.join(opt.results_dir, opt.name, f"{opt.phase}_{opt.epoch or 'latest'}")
     if opt.load_iter > 0:
-        web_dir = f"{web_dir}_iter{opt.load_iter}"
-
+        web_dir += f"_iter{opt.load_iter}"
     print("Creating web directory:", web_dir)
-    webpage = html.HTML(
-        web_dir,
-        f"Experiment = {opt.name}, Phase = {opt.phase}, Epoch = {opt.epoch}",
-    )
+    webpage = html.HTML(web_dir, f"Experiment = {opt.name}, Phase = {opt.phase}, Epoch = {opt.epoch}")
 
-    # ----------------------------------
-    # Inference loop
-    # ----------------------------------
-    LOG_EVERY = 5        # → push an image + resource stats every N samples
-    RES_MON_EVERY = 20   # → print CPU/GPU stats every M samples
+    LOG_EVERY = 5
+    RES_MON_EVERY = 20
 
     for i, data in enumerate(dataset):
         if i >= opt.num_test:
@@ -125,41 +116,43 @@ def main():
         img_path = model.get_image_paths()
 
         if i % LOG_EVERY == 0:
-            print(f"Processing ({i:04d})‑th image … {img_path}")
+            print(f"Processing ({i:04d})‑th image … {img_path}")
 
-        # Save to HTML (and WandB inside util if opt.use_wandb=True)
-        save_images(
-            webpage,
-            visuals,
-            img_path,
-            aspect_ratio=opt.aspect_ratio,
-            width=opt.display_winsize,
-            use_wandb=opt.use_wandb,
-        )
+        # ---------- Metric update ----------
+        fake_he = visuals["fake_B"]   # UV → H&E
+        real_he = visuals["real_B"]
+        fake_t = to01(fake_he).unsqueeze(0).to(model.device)
+        real_t = to01(real_he).unsqueeze(0).to(model.device)
+        ssim_metric.update(fake_t, real_t)
+        fid_metric.update(real_t * 255, real=True)
+        fid_metric.update(fake_t * 255, real=False)
 
-        # ✚ Explicit WandB logging (similar to train.py)
+        # ---------- Save visuals ----------
+        save_images(webpage, visuals, img_path, aspect_ratio=opt.aspect_ratio, width=opt.display_winsize, use_wandb=opt.use_wandb)
+
         if run_name and i % LOG_EVERY == 0:
-            wandb.log(
-                {
-                    "test_images": [wandb.Image(img, caption=lbl) for lbl, img in visuals.items()],
-                    "sample_index": i,
-                }
-            )
+            wandb.log({
+                "test_images": [wandb.Image(img, caption=lbl) for lbl, img in visuals.items()],
+                "sample_index": i,
+            })
 
-        # ↳ Occasional resource read‑out
         if i % RES_MON_EVERY == 0:
             monitor_resources()
 
-    # ----------------------------------
-    # Finalise
-    # ----------------------------------
+    # ── Compute final metrics ───────────────────────────────────
+    ssim_val = ssim_metric.compute().item()
+    fid_val = fid_metric.compute().item()
+    print(f"SSIM: {ssim_val:.4f} | FID: {fid_val:.2f}")
+
+    if run_name:
+        wandb.log({"metric/SSIM": ssim_val, "metric/FID": fid_val})
+
     webpage.save()
 
     if run_name:
-        # Archive the HTML folder as an artefact so it’s always retrievable.
-        artefact = wandb.Artifact("cycleGAN-test-results", type="inference")
-        artefact.add_dir(web_dir)
-        wandb.log_artifact(artefact)
+        art = wandb.Artifact("cycleGAN-test-results", type="inference")
+        art.add_dir(web_dir)
+        wandb.log_artifact(art)
         print(f"🗂️  Results uploaded to W&B artefact: {web_dir}")
         wandb.finish()
 
