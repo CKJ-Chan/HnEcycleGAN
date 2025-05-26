@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Enhanced test.py for CycleGAN
--------------------------------------------------
-Adds:
-• WandB logging (images + artefact)
-• CPU/GPU resource monitoring
-• Quantitative metrics (SSIM & FID)
+"""Enhanced test.py for CycleGAN (unpaired setting)
+---------------------------------------------------
+* Logs qualitative results to HTML + WandB
+* Quantitative metrics designed for **unpaired** UV → H&E translation:
+  ─ **FID** between generated‑H&E and real‑H&E (distribution realism)
+  ─ **PSNR** between cycle‑reconstructed UV and original UV (content preservation)
+* Optional CPU / GPU resource snapshots during inference
 """
 
 import os
-import time
 from datetime import datetime
 
-import psutil  # ✔️ CPU/RAM monitoring
-import GPUtil  # ✔️ GPU monitoring
+import psutil                       # CPU / RAM
+import GPUtil                       # GPU load / memory
 
 from options.test_options import TestOptions
 from data import create_dataset
@@ -20,8 +20,8 @@ from models import create_model
 from util.visualizer import save_images
 from util import html
 
-# ── Metrics
-from torchmetrics.image import StructuralSimilarityIndexMeasure, FrechetInceptionDistance
+# ── Metrics ──────────────────────────────────────────────────────
+from torchmetrics.image import FrechetInceptionDistance, PeakSignalNoiseRatio
 import torchvision.transforms as T
 
 try:
@@ -31,7 +31,7 @@ except ImportError:
     print("⚠️  wandb package not found — disabling WandB logging.")
 
 # ---------------------------------------------------------------
-# Helper: resource‑usage print‑out every N iterations
+# Helper: resource‑usage print‑out
 # ---------------------------------------------------------------
 
 def monitor_resources():
@@ -55,14 +55,14 @@ def monitor_resources():
 def main():
     opt = TestOptions().parse()
 
-    # Hard‑coded test‑time tweaks
+    # Deterministic test‑time settings
     opt.num_threads = 0
     opt.batch_size = 1
     opt.serial_batches = True
     opt.no_flip = True
     opt.display_id = -1
 
-    # ── WandB init ──────────────────────────────────────────────
+    # ── WandB initialisation ────────────────────────────────────
     run_name = None
     if getattr(opt, "use_wandb", False) and wandb is not None:
         api_key = os.getenv("WANDB_API_KEY")
@@ -83,16 +83,19 @@ def main():
             )
             print(f"✅ W&B test run started: {run_name}")
 
-    # ── Data + model ────────────────────────────────────────────
+    # ── Data + model setup ─────────────────────────────────────
     dataset = create_dataset(opt)
     model = create_model(opt)
     model.setup(opt)
     if opt.eval:
         model.eval()
 
+    device = model.device
+
     # ── Metric trackers ─────────────────────────────────────────
-    ssim_metric = StructuralSimilarityIndexMeasure(data_range=1.0).to(model.device)
-    fid_metric = FrechetInceptionDistance(feature=64).to(model.device)
+    fid_metric = FrechetInceptionDistance(feature=64).to(device)
+    psnr_metric = PeakSignalNoiseRatio(data_range=1.0).to(device)
+    # tensor converter 0‑1, resize to crop_size to align shapes
     to01 = T.Compose([T.ToPILImage(), T.Resize(opt.crop_size), T.ToTensor()])
 
     # ── HTML result dir ─────────────────────────────────────────
@@ -118,17 +121,31 @@ def main():
         if i % LOG_EVERY == 0:
             print(f"Processing ({i:04d})‑th image … {img_path}")
 
-        # ---------- Metric update ----------
-        fake_he = visuals["fake_B"]   # UV → H&E
+        # ---------- Metric update ----------------------------------------
+        # FID: compare generated H&E (fake_B) with real H&E (real_B)
+        fake_he = visuals["fake_B"]
         real_he = visuals["real_B"]
-        fake_t = to01(fake_he).unsqueeze(0).to(model.device)
-        real_t = to01(real_he).unsqueeze(0).to(model.device)
-        ssim_metric.update(fake_t, real_t)
+        fake_t = to01(fake_he).unsqueeze(0).to(device)
+        real_t = to01(real_he).unsqueeze(0).to(device)
         fid_metric.update(real_t * 255, real=True)
         fid_metric.update(fake_t * 255, real=False)
 
-        # ---------- Save visuals ----------
-        save_images(webpage, visuals, img_path, aspect_ratio=opt.aspect_ratio, width=opt.display_winsize, use_wandb=opt.use_wandb)
+        # PSNR: cycle‑reconstructed UV (rec_A) vs original UV (real_A)
+        rec_uv = visuals["rec_A"]
+        real_uv = visuals["real_A"]
+        rec_t = to01(rec_uv).unsqueeze(0).to(device)
+        realuv_t = to01(real_uv).unsqueeze(0).to(device)
+        psnr_metric.update(rec_t, realuv_t)
+
+        # ---------- Save visuals ----------------------------------------
+        save_images(
+            webpage,
+            visuals,
+            img_path,
+            aspect_ratio=opt.aspect_ratio,
+            width=opt.display_winsize,
+            use_wandb=opt.use_wandb,
+        )
 
         if run_name and i % LOG_EVERY == 0:
             wandb.log({
@@ -140,12 +157,12 @@ def main():
             monitor_resources()
 
     # ── Compute final metrics ───────────────────────────────────
-    ssim_val = ssim_metric.compute().item()
     fid_val = fid_metric.compute().item()
-    print(f"SSIM: {ssim_val:.4f} | FID: {fid_val:.2f}")
+    psnr_val = psnr_metric.compute().item()
+    print(f"FID: {fid_val:.2f} | PSNR_cycle: {psnr_val:.2f} dB")
 
     if run_name:
-        wandb.log({"metric/SSIM": ssim_val, "metric/FID": fid_val})
+        wandb.log({"metric/FID": fid_val, "metric/PSNR_cycle": psnr_val})
 
     webpage.save()
 
@@ -161,3 +178,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
